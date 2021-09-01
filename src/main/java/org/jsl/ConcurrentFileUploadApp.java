@@ -1,6 +1,6 @@
 package org.jsl;
 
-import org.jsl.concurrentfileupload.http.NettyServer;
+import org.jsl.concurrentfileupload.http.NettyHttpServer;
 
 import java.io.IOException;
 
@@ -10,7 +10,7 @@ import java.io.IOException;
 public class ConcurrentFileUploadApp {
 
     public static void main(String[] args) {
-        NettyServer nettyServer = new NettyServer(18888);
+        NettyHttpServer nettyServer = new NettyHttpServer(18888);
         try {
             nettyServer.start();
         } catch (IOException e) {
@@ -24,9 +24,9 @@ public class ConcurrentFileUploadApp {
 
     private static class ShutdownThread extends Thread {
 
-        private NettyServer nettyServer;
+        private NettyHttpServer nettyServer;
 
-        public ShutdownThread(NettyServer nettyServer) {
+        public ShutdownThread(NettyHttpServer nettyServer) {
             this.nettyServer = nettyServer;
         }
 

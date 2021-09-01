@@ -28,7 +28,7 @@ public class DynamicChannelHandler extends ChannelInboundHandlerAdapter {
             if (msg instanceof HttpRequest) {
                 boolean multipartContent = HttpUtil.isMultipartContent((HttpRequest) msg);
                 if (multipartContent) {
-                    ctx.channel().pipeline().addLast(new HttpMultiPartUploadChannelHandler());
+                    ctx.channel().pipeline().addLast(new HttpMultiPartUploadChannelHandler((NioSocketChannel) ctx.channel()));
                 } else {
                     ctx.channel().pipeline().addLast(new HttpObjectAggregator(8 * 1024));
                     ctx.channel().pipeline().addLast(new CommonHttpRequestChannelHandler());

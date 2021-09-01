@@ -13,9 +13,15 @@ public class NamedThreadFactory implements ThreadFactory {
     private String namePrefix;
     private AtomicInteger number = new AtomicInteger(0);
     private ThreadGroup tGroup;
+    private boolean daemon;
 
     public NamedThreadFactory(String namePrefix) {
+        this(namePrefix, false);
+    }
+
+    public NamedThreadFactory(String namePrefix, boolean daemon) {
         this.namePrefix = namePrefix;
+        this.daemon = daemon;
         SecurityManager manager = System.getSecurityManager();
         tGroup = manager == null ? Thread.currentThread().getThreadGroup() : manager.getThreadGroup();
     }
@@ -23,6 +29,8 @@ public class NamedThreadFactory implements ThreadFactory {
     @Override
     public Thread newThread(Runnable r) {
         String tName = namePrefix + "-thread-" + number.incrementAndGet();
-        return new Thread(tGroup, r, tName, 0);
+        Thread thread = new Thread(tGroup, r, tName, 0);
+        thread.setDaemon(daemon);
+        return thread;
     }
 }

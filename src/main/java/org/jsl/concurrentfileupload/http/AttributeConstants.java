@@ -9,5 +9,5 @@ import io.netty.util.AttributeKey;
  */
 public class AttributeConstants {
 
-    public static AttributeKey<NettyServer> SERVER = AttributeKey.valueOf("server");
+    public static AttributeKey<NettyHttpServer> SERVER = AttributeKey.valueOf("server");
 }

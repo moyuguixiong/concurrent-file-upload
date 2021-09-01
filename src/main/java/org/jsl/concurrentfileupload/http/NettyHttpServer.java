@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * @version 0.0.1
  * @date 2021/08/31
  */
-public class NettyServer implements LifeCycle {
+public class NettyHttpServer implements LifeCycle {
 
     /**
      * server state controll
@@ -48,11 +48,11 @@ public class NettyServer implements LifeCycle {
     private DynamicChannelHandler dynamicChannelHandler = new DynamicChannelHandler();
 
 
-    public NettyServer(int port) {
+    public NettyHttpServer(int port) {
         this(null, port);
     }
 
-    public NettyServer(String host, int port) {
+    public NettyHttpServer(String host, int port) {
         if (host == null || "".equals(host)) {
             localAddress = new InetSocketAddress(port);
         } else {
@@ -72,9 +72,9 @@ public class NettyServer implements LifeCycle {
 
             @Override
             protected void initChannel(NioSocketChannel ch) throws Exception {
-                Attribute<NettyServer> attr = ch.attr(AttributeConstants.SERVER);
+                Attribute<NettyHttpServer> attr = ch.attr(AttributeConstants.SERVER);
                 if (attr.get() == null) {
-                    attr.set(NettyServer.this);
+                    attr.set(NettyHttpServer.this);
                 }
                 //获取socket的默认的receive buffer size。
                 if (receiveBufferSize <= 0) {

@@ -25,6 +25,14 @@ public class ChannelSerializationWorkQueue extends LinkedBlockingQueue<Runnable>
 
     @Override
     public boolean offer(Runnable runnable) {
+        if (bindExecutor != null) {
+            //if current number of threads in the pool is smaller than max size of threads, then return false.
+            //so when the all thread in the thread pool is busy,but the current number of threads is smaller then max size of threads,
+            //will firset create new thread to handle the task,not add to then task queue.
+            if (bindExecutor.getPoolSize() < bindExecutor.getMaximumPoolSize()) {
+                return false;
+            }
+        }
         return super.offer(runnable);
     }
 }
