@@ -13,5 +13,7 @@ public interface LifeCycle {
 
     void stop();
 
+    void pause();
+
     boolean isStarted();
 }

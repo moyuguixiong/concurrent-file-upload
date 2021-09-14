@@ -1,25 +1,21 @@
 package org.jsl.concurrentfileupload.http;
 
 import io.netty.buffer.ByteBuf;
-import io.netty.channel.Channel;
-import io.netty.channel.ChannelDuplexHandler;
-import io.netty.channel.ChannelHandlerContext;
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.channel.*;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.http.HttpContent;
-import io.netty.handler.codec.http.HttpRequest;
-import io.netty.handler.codec.http.LastHttpContent;
-import io.netty.util.Attribute;
+import io.netty.handler.codec.http.*;
 import org.jsl.concurrentfileupload.flowcontrol.BackPressure;
-import org.jsl.concurrentfileupload.flowcontrol.FlowControlAssistant;
+import org.jsl.concurrentfileupload.flowcontrol.RateLimiterAndBacklogBackPressure;
 import org.jsl.concurrentfileupload.threadpool.ChannelEventRunnable;
 import org.jsl.concurrentfileupload.threadpool.ChannelSerializaionThreadPoolExecutor;
 import org.jsl.concurrentfileupload.threadpool.ChannelSerializationWorkQueue;
 import org.jsl.concurrentfileupload.threadpool.NamedThreadFactory;
 
+import java.util.UUID;
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * achieve read data flow control by back pressure,the theory is by netty's autoRead and ChannelOutboundHandler's read() method.
@@ -28,18 +24,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * @version 0.0.1
  * @date 2021/08/31
  */
-public class HttpMultiPartUploadChannelHandler extends ChannelDuplexHandler implements BackPressure {
-
-    private ChannelSerializaionThreadPoolExecutor executor;
+public class HttpMultiPartUploadChannelHandler extends ChannelDuplexHandler {
 
     private NioSocketChannel clientChannel;
 
-    private int readBufferLowWaterMark;
+    private ChannelSerializaionThreadPoolExecutor executor;
 
-    private int readBufferHighWaterMark;
+    private BackPressure backPressure;
 
-    private AtomicBoolean readFlowControlOpen = new AtomicBoolean(false);
+    private boolean removeCumulatorContenLength;
 
+    private boolean beginRead;
 
     public HttpMultiPartUploadChannelHandler(NioSocketChannel clientChannel) {
         this(clientChannel, 0, 0);
@@ -48,136 +43,100 @@ public class HttpMultiPartUploadChannelHandler extends ChannelDuplexHandler impl
     public HttpMultiPartUploadChannelHandler(NioSocketChannel clientChannel, int readBufferLowWaterMark, int readBufferHighWaterMark) {
         ChannelSerializationWorkQueue workQueue = new ChannelSerializationWorkQueue();
         // TODO: 2021/08/31 1、thread pool parameters can be get from java -D parameters
-        executor = new ChannelSerializaionThreadPoolExecutor(Runtime.getRuntime().availableProcessors(), 200, 10, TimeUnit.SECONDS, workQueue, new NamedThreadFactory("channelserialization"),
+        executor = new ChannelSerializaionThreadPoolExecutor(Runtime.getRuntime().availableProcessors(), 200, 10, TimeUnit.SECONDS, workQueue, new NamedThreadFactory("channelserialize"),
                 new ThreadPoolExecutor.DiscardPolicy());
         //bind executor to work queue.
         workQueue.setBindExecutor(executor);
         this.clientChannel = clientChannel;
-        readFlowControlOpen.set(clientChannel.config().isAutoRead());
-        this.readBufferLowWaterMark = readBufferLowWaterMark;
-        this.readBufferHighWaterMark = readBufferHighWaterMark;
+        backPressure = new RateLimiterAndBacklogBackPressure(clientChannel, executor);
     }
 
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
         if (msg instanceof HttpRequest) {
-            Attribute<NettyHttpServer> attr = ctx.channel().attr(AttributeConstants.SERVER);
-            NettyHttpServer nettyServer = attr.get();
-
-        } else if (msg instanceof LastHttpContent) {
-            //handle last request body
-            //DefaultHttpContent implements HttpContent,so handle LastHttpContent before HttpContent
-            LastHttpContent lastHttpContent = (LastHttpContent) msg;
-            executor.execute(createChannelEventRunnable(clientChannel, lastHttpContent.content()));
-            openBackPressure();
-        } else if (msg instanceof HttpContent) {
-            //handle non last request body
-            HttpContent httpContent = (HttpContent) msg;
-            executor.execute(createChannelEventRunnable(clientChannel, httpContent.content()));
-            openBackPressure();
-        }
-        //continue the flow in the channelpipeline
-        super.channelRead(ctx, msg);
-    }
-
-    @Override
-    public void read(ChannelHandlerContext ctx) throws Exception {
-        //setAutoRead(true)，will not remove current channel's OP_READ event from Selector object
-        ctx.channel().config().setAutoRead(true);
-        //HeadContext invoke unsafe.read() will  register current channel's OP_READ event to Selector object
-        ctx.read();
-    }
-
-    public ChannelEventRunnable createChannelEventRunnable(Channel channel, ByteBuf byteBuf) {
-        ChannelEventRunnable channelEventRunnable = new ChannelEventRunnable(channel, byteBuf);
-        return channelEventRunnable;
-    }
-
-    @Override
-    public boolean isReadFlowControlOpen() {
-        return readFlowControlOpen.get();
-    }
-
-    @Override
-    public boolean isWriteFlowControlOpen() {
-        return false;
-    }
-
-    @Override
-    public boolean shouldCloseReadFlowControl() {
-        return shouldBackPressureOpen();
-    }
-
-    @Override
-    public boolean shouldCloseWriteFlowControl() {
-        return true;
-    }
-
-    /**
-     * {@link HttpMultiPartUploadChannelHandler#read}
-     *
-     * @return
-     */
-    @Override
-    public boolean closeReadFlowControl() {
-        if (readFlowControlOpen.compareAndSet(true, false)) {
-            clientChannel.pipeline().read();
-        }
-        return !readFlowControlOpen.get();
-    }
-
-    @Override
-    public boolean closeWriteFlowControl() {
-        throw new RuntimeException("not support closeWriteFlowControl!");
-    }
-
-    @Override
-    public int getReadBufferLowWaterMark() {
-        return readBufferLowWaterMark;
-    }
-
-    @Override
-    public int getReadBufferHighWaterMark() {
-        return readBufferHighWaterMark;
-    }
-
-    @Override
-    public boolean shouldBackPressureOpen() {
-        int channelPendingByteSize = executor.getChannelPendingByteSize(clientChannel);
-        if (readBufferHighWaterMark > 0 && channelPendingByteSize >= readBufferHighWaterMark) {
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    public boolean shouldBackPressureClose() {
-        int channelPendingByteSize = executor.getChannelPendingByteSize(clientChannel);
-        if (readBufferLowWaterMark > 0 && channelPendingByteSize <= readBufferLowWaterMark) {
-            return true;
-        }
-        return false;
-    }
-
-    @Override
-    public void openBackPressure() {
-        if (shouldBackPressureOpen()) {
-            //read flow control is opened
-            if (readFlowControlOpen.compareAndSet(false, true)) {
-                FlowControlAssistant flowControlAssistant = FlowControlAssistant.createFlowControlAssistant();
-                if (flowControlAssistant == null) {
-                    readFlowControlOpen.set(false);
-                    throw new RuntimeException("Get FlowControlAssistant Error");
-                }
-                clientChannel.config().setAutoRead(false);
-                flowControlAssistant.closeFlowControl(this);
+            HttpRequest request = (HttpRequest) msg;
+            //1.validate http header content-length
+            String contentLengthStr = HttpUtil.getRequestHeader(request, "content-length");
+            int contentLength = 0;
+            try {
+                contentLength = Integer.parseInt(contentLengthStr);
+            } catch (NumberFormatException e) {
+            }
+            if (contentLength <= 0) {
+                DefaultFullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
+                ctx.writeAndFlush(response);
+                ctx.channel().close();
+            }
+            //2.save the content-length to the channel
+            AttributeConstants.setAttrValue(ctx.channel(), AttributeConstants.UPLOAD_CONTENT_LENGTH, contentLength);
+            //adjust AdaptiveRecvByteBufAllocator's maxmum byte size of ByteBuf in every channelRead.
+            //new AdaptiveRecvByteBufAllocator();
+            beginRead = true;
+            backPressure.addChannelCumulatorContentLength(contentLength);
+            String filename = HttpUtil.getRequestHeader(request, "filename");
+            String generateName = null;
+            if (filename == null || "".equals(filename)) {
+                generateName = UUID.randomUUID().toString() + ".pdf";
+            }
+            AttributeConstants.setAttrValue(ctx.channel(), AttributeConstants.GENERATE_FILE_NAME, generateName);
+        } else {
+            byte[] bytes = null;
+            HttpContent httpContent = null;
+            if (msg instanceof LastHttpContent) {
+                //handle last request body
+                //DefaultHttpContent implements HttpContent,so handle LastHttpContent before HttpContent
+                httpContent = (LastHttpContent) msg;
+                //读取完成所有请求后，恢复200响应，并关闭连接
+                ByteBufAllocator allocator = ctx.channel().config().getAllocator();
+                ByteBuf buffer = allocator.buffer();
+                buffer.writeBytes("upload success".getBytes());
+                DefaultFullHttpResponse response = new DefaultFullHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
+                ctx.channel().writeAndFlush(response);
+                ctx.channel().close();
+            } else if (msg instanceof HttpContent) {
+                //handle non last request body
+                httpContent = (HttpContent) msg;
+                //2021/09/03 should achieve the flow control by upload rate(上传速率) and message backlog(消息积压) and  back pressure(回压).
+                backPressure.openBackPressureIfNecessary(AttributeConstants.getAttrValue(clientChannel, AttributeConstants.UPLOAD_CONTENT_LENGTH), httpContent.content());
+            }
+            int byteLen = httpContent.content().readableBytes();
+            if (byteLen > 0) {
+                bytes = new byte[byteLen];
+                httpContent.content().readBytes(bytes);
+                ChannelEventRunnable task = createChannelEventRunnable(clientChannel, bytes, AttributeConstants.getAttrValue(ctx.channel(), AttributeConstants.UPLOAD_CONTENT_LENGTH),
+                        AttributeConstants.getAttrValue(ctx.channel(), AttributeConstants.GENERATE_FILE_NAME));
+                executor.execute(task);
             }
         }
+        //continue the flow in the channelpipeline
+        ctx.fireChannelRead(msg);
     }
 
     @Override
-    public void closeBackPressure() {
+    public void close(ChannelHandlerContext ctx, ChannelPromise promise) throws Exception {
+        //客户端主动关闭连接、OutOfMemoryError、IOException不会触发ChannelOutboundHandler的close()方法回调。但是会触发inactive和unregistered
+        //io.netty.channel.nio.AbstractNioByteChannel.NioByteUnsafe.read()
+        //io.netty.channel.nio.AbstractNioByteChannel.NioByteUnsafe.handleReadException()
+        if (!removeCumulatorContenLength && beginRead) {
+            backPressure.removeChannelCumulatorContentLength(AttributeConstants.getAttrValue(ctx.channel(), AttributeConstants.UPLOAD_CONTENT_LENGTH));
+            removeCumulatorContenLength = true;
+        }
+        ctx.close();
+    }
 
+    @Override
+    public void channelUnregistered(ChannelHandlerContext ctx) throws Exception {
+        //客户端主动关闭连接、OutOfMemoryError、IOException不会触发ChannelOutboundHandler的close()方法回调。但是会触发inactive和unregistered
+        //为了快速清除回压的连接数和上传总字节数，在Unregistered中清除一次。
+        if (!removeCumulatorContenLength && beginRead) {
+            backPressure.removeChannelCumulatorContentLength(AttributeConstants.getAttrValue(ctx.channel(), AttributeConstants.UPLOAD_CONTENT_LENGTH));
+            removeCumulatorContenLength = true;
+        }
+    }
+
+    private ChannelEventRunnable createChannelEventRunnable(Channel channel, byte[] bytes, int totalByteSize, String fileName) {
+        ChannelEventRunnable channelEventRunnable = new ChannelEventRunnable(channel, bytes, totalByteSize, fileName);
+        return channelEventRunnable;
     }
 
     public static class A implements RejectedExecutionHandler {

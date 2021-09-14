@@ -84,6 +84,7 @@ public class NettyHttpServer implements LifeCycle {
                         receiveBufferSize = socketChannel.socket().getReceiveBufferSize();
                     }
                 }
+                //because support big file upload,so maxChunkSize set 1MB
                 ch.pipeline().addLast(new HttpServerCodec(HttpObjectDecoder.DEFAULT_MAX_INITIAL_LINE_LENGTH, HttpObjectDecoder.DEFAULT_MAX_HEADER_SIZE, receiveBufferSize));
                 ch.pipeline().addLast(dynamicChannelHandler);
                 //ch.pipeline().addLast(new HttpObjectAggregator());
@@ -102,7 +103,6 @@ public class NettyHttpServer implements LifeCycle {
                 bindFuture = serverBootstrap.bind().sync();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                e.printStackTrace();
             }
             bindFuture.addListener(new ChannelFutureListener() {
                 @Override
@@ -132,6 +132,11 @@ public class NettyHttpServer implements LifeCycle {
                 workerGroup.shutdownGracefully();
             }
         }
+    }
+
+    @Override
+    public void pause() {
+        // TODO: 2021/09/14 achieve pause
     }
 
     @Override

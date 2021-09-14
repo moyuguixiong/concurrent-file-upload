@@ -1,12 +1,8 @@
 package org.jsl.concurrentfileupload.http;
 
-import io.netty.channel.ChannelHandler;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.channel.*;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.http.HttpObject;
-import io.netty.handler.codec.http.HttpObjectAggregator;
-import io.netty.handler.codec.http.HttpRequest;
+import io.netty.handler.codec.http.*;
 import io.netty.util.Attribute;
 import io.netty.util.AttributeKey;
 
@@ -26,9 +22,15 @@ public class DynamicChannelHandler extends ChannelInboundHandlerAdapter {
             ctx.channel().close();
         } else {
             if (msg instanceof HttpRequest) {
-                boolean multipartContent = HttpUtil.isMultipartContent((HttpRequest) msg);
+                HttpRequest request = (HttpRequest) msg;
+                boolean multipartContent = HttpUtil.isMultipartContent(request);
                 if (multipartContent) {
-                    ctx.channel().pipeline().addLast(new HttpMultiPartUploadChannelHandler((NioSocketChannel) ctx.channel()));
+                    //add business channelhandler
+                    ctx.channel().pipeline().addLast(new HttpMultiPartUploadChannelHandler((NioSocketChannel) ctx.channel(), 64 * 1024, 1024 * 1024));
+                    //(1).client upload speed
+                    //(2). file totalsize
+                    //update channel's AdaptiveRecvByteBufAllocator's maxmum of ByteBuf,this decide the byte size of ByteBuf in ChannelEventRunnable,
+                    //and decide every run's byte size upload to tencent in the thread pool.
                 } else {
                     ctx.channel().pipeline().addLast(new HttpObjectAggregator(8 * 1024));
                     ctx.channel().pipeline().addLast(new CommonHttpRequestChannelHandler());

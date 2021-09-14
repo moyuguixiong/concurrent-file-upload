@@ -6,6 +6,7 @@ import org.jsl.concurrentfileupload.threadpool.NamedThreadFactory;
 import org.junit.Test;
 
 import javax.naming.Name;
+import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.util.concurrent.CountDownLatch;
@@ -75,5 +76,30 @@ public class AppTest {
             e.printStackTrace();
         }
 
+    }
+
+    @Test
+    public void writeFileTest() throws IOException {
+        long start = System.currentTimeMillis();
+        File file = new File("E:\\2-learn\\Java性能优化权威指南.pdf");
+        byte[] bytes = new byte[65536];
+        File writeFile = new File("E:\\Java性能优化权威指南.pdf");
+        if (!writeFile.exists()) {
+            writeFile.createNewFile();
+        }
+        RandomAccessFile raf = new RandomAccessFile(writeFile, "rw");
+        try (BufferedInputStream inputStream = new BufferedInputStream(new FileInputStream(file))) {
+            int read = 0;
+            while ((read = inputStream.read(bytes)) > 0) {
+                raf.write(bytes, 0, read);
+            }
+
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        long end = System.currentTimeMillis();
+        System.out.println((end - start));
     }
 }
